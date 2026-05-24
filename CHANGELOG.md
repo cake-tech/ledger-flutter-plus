@@ -1,3 +1,6 @@
+## 1.6.0
+- Updated universal_ble to ^2.0.0
+
 ## 1.5.6
 - Updated universal_ble to ^1.1.0
 
