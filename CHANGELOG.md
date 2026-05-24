@@ -1,4 +1,10 @@
+## 1.6.0+1
+
+- Updated changelog
+
 ## 1.6.0
+
+- Added support for Ledger Nano Gen5
 - Updated universal_ble to ^2.0.0
 
 ## 1.5.6
