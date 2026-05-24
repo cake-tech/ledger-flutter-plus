@@ -44,9 +44,9 @@ enum LedgerDeviceType {
   nanoGen5(
     usbOnly: false,
     productIdMM: 0x80,
-    serviceId: "13d63400-2c97-8004-0000-4c6564676572",
-    writeCharacteristicKey: "13d63400-2c97-8004-0002-4c6564676572",
-    notifyCharacteristicKey: "13d63400-2c97-8004-0001-4c6564676572",
+    serviceId: "13D63400-2C97-8004-0000-4C6564676572",
+    writeCharacteristicKey: "13D63400-2C97-8004-0002-4C6564676572",
+    notifyCharacteristicKey: "13D63400-2C97-8004-0001-4C6564676572",
   );
 
   static List<LedgerDeviceType> get ble => values.where((e) => !e.usbOnly).toList();
