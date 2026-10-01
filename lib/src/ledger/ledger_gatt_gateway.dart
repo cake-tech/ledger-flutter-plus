@@ -339,7 +339,9 @@ class _Request {
           connectionType: ConnectionType.ble,
         );
       }
-      _expectedDataLength = data[4];
+
+      // The first frame carries the total response length as a big-endian u16 (bytes 3 and 4)
+      _expectedDataLength = (data[3] << 8) | data[4];
     }
 
     // for first packet, skip the first 5 bytes | for the rest, skip the first 3 bytes
