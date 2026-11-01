@@ -125,6 +125,7 @@ class UnexpectedDataPacketException extends LedgerException {
 
 enum UnexpectedDataPacketReason {
   tooShortLength,
+  dataLengthExceeded,
   indexAlreadySet,
   dataLengthAlreadySet,
   // we received a data packet without a pending request

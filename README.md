@@ -189,11 +189,30 @@ final ledger = Ledger(
 
 ### Disconnect
 
-Use the `disconnect()` method to close an established connection with a ledger device.
+Use the connection's `disconnect()` method to close an established connection.
 
 ```dart
-await ledger.disconnect(device);
+final connection = await ledger.connect(device);
+await connection.disconnect();
 ```
+
+For BLE, a physical disconnect, explicit disconnect, manager disposal, or BLE
+write timeout terminates in-flight and queued operations with
+`ConnectionLostException`. The connection's
+`isDisconnected` becomes `true`; subsequent operations on it throw
+`DeviceNotConnectedException`. Connect again to obtain a new `LedgerConnection`.
+Interrupted operations are not automatically retried; decide whether it is safe
+to retry after checking the device state. A reconnect may wait for a previously
+submitted BLE write to settle.
+If cleanup is still pending after the existing five-second connection-state
+interval, reconnect fails with `EstablishConnectionException` containing a
+`TimeoutException`; the cleanup barrier remains in place for a later retry.
+An explicit disconnect that cannot finish cleanup within that interval fails
+with `DisposeException` containing the timeout, while cleanup continues.
+After a session ends, reconnect requires the BLE platform to report the device
+as disconnected; if the link remains connected or its state cannot be checked,
+the attempt fails instead of reusing it. This check does not identify delayed
+native notifications from an earlier connection.
 
 ### Dispose
 

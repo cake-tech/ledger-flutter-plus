@@ -38,6 +38,7 @@ class RequestQueue {
 
   final Queue<({FutureOr Function() data, Completer completer})> _requests = Queue();
   bool _isSending = false;
+  Completer? _inFlight;
 
   RequestQueue({
     this.inFlightTimeout,
@@ -72,22 +73,24 @@ class RequestQueue {
       }
       _isSending = true;
       final (data: request, completer: completer) = _requests.removeFirst();
+      _inFlight = completer;
+      Timer? timer;
 
       try {
         final inFlightTimeout = this.inFlightTimeout;
         if (inFlightTimeout != null) {
-          completer.setTimeout(inFlightTimeout);
+          timer = Timer(inFlightTimeout, () {
+            dispose(error: TimeoutException("Operation timed out", inFlightTimeout));
+          });
         }
 
-        final resultFuture = request();
-
-        // Wait for either the future value to complete or the completer to complete
-        // --- Note: The completer would complete before result only if it times out
-        await Future.any([Future.value(resultFuture), completer.future]);
-
-        completer.completeIfPending(await resultFuture);
-      } catch (e) {
-        completer.completeErrorIfPending(e);
+        final result = await Future.any([Future.sync(request), completer.future]);
+        completer.completeIfPending(result);
+      } catch (e, stack) {
+        if (!completer.isCompleted) completer.completeError(e, stack);
+      } finally {
+        timer?.cancel();
+        _inFlight = null;
       }
     } catch (e) {
       // ignore: avoid_print
@@ -96,22 +99,24 @@ class RequestQueue {
     await _sendNext();
   }
 
-  void dispose() {
+  void dispose({Object? error}) {
     if (_disposed) {
       return;
     }
     try {
       _disposed = true;
       _isSending = false;
+      final cancellation = error ?? StateError("RequestQueue disposed");
+      _inFlight?.completeErrorIfPending(cancellation);
 
       _isReady.completeErrorIfPending(
-        StateError("RequestQueue disposed"),
+        cancellation,
       );
       while (_requests.isNotEmpty) {
         final req = _requests.removeFirst();
 
         req.completer.completeErrorIfPending(
-          StateError("Pending Request Canceled | RequestQueue disposed"),
+          error ?? StateError("Pending Request Canceled | RequestQueue disposed"),
         );
       }
     } catch (e) {

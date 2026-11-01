@@ -46,11 +46,19 @@ sealed class LedgerInterface {
     } catch (ex) {
       // no-op
     }
-    await _connectionManager.connect(device);
+    final manager = _connectionManager;
+    final int? bleSession;
+    if (manager is LedgerBleConnectionManager) {
+      bleSession = await manager.connectSession(device);
+    } else {
+      await manager.connect(device);
+      bleSession = null;
+    }
 
     return LedgerConnection(
-      _connectionManager,
+      manager,
       device,
+      bleSession: bleSession,
     );
   }
 
@@ -58,9 +66,9 @@ sealed class LedgerInterface {
   Future<void> dispose({final Function(LedgerException)? onError}) async {
     switch (_connectionManager.connectionType) {
       case ConnectionType.usb:
-        _ledgerUsb = null;
+        if (identical(_ledgerUsb, this)) _ledgerUsb = null;
       case ConnectionType.ble:
-        _ledgerBle = null;
+        if (identical(_ledgerBle, this)) _ledgerBle = null;
     }
 
     try {
