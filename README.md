@@ -214,9 +214,17 @@ as disconnected; if the link remains connected or its state cannot be checked,
 the attempt fails instead of reusing it. This check does not identify delayed
 native notifications from an earlier connection.
 
+BLE devices are exposed as connected only after gateway startup and notification
+subscription finish. Operations submitted before this point fail with
+`DeviceNotConnectedException` instead of using an incomplete session.
+
 ### Dispose
 
 Always use the `dispose()` method to close all connections and dispose any potential listeners to not leak any resources.
+
+Availability callbacks from disposed or superseded BLE managers are detached;
+callbacks already scheduled for those managers are ignored. Disposing an older
+manager does not clear its replacement's callbacks.
 
 ```dart
 await ledger.dispose();

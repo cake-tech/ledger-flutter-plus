@@ -30,6 +30,7 @@ class LedgerBleConnectionManager extends ConnectionManager {
   static final _drains = <String, Future<void>>{};
   static final _retiredDevices = <String>{};
   static LedgerBleConnectionManager? _callbackOwner;
+  static LedgerBleConnectionManager? _availabilityCallbackOwner;
 
   final List<OnConnectionChange> _connectionChangeListeners = [];
 
@@ -190,7 +191,6 @@ class LedgerBleConnectionManager extends ConnectionManager {
         },
       );
       attempt.gateway = gateway;
-      _connectedDevices[device.id] = (gateway: gateway, device: device);
 
       final starting = gateway.start();
       attempt.track(starting);
@@ -202,6 +202,7 @@ class LedgerBleConnectionManager extends ConnectionManager {
         ),
       );
       checkSession();
+      _connectedDevices[device.id] = (gateway: gateway, device: device);
       _retiredDevices.remove(device.id);
       _attempts.remove(device.id);
       return epoch;
@@ -255,8 +256,10 @@ class LedgerBleConnectionManager extends ConnectionManager {
     if (identical(_attempts[attempt.deviceId], attempt)) _attempts.remove(attempt.deviceId);
 
     final gateway = attempt.gateway;
-    if (gateway != null && identical(_connectedDevices[attempt.deviceId]?.gateway, gateway)) {
-      _connectedDevices.remove(attempt.deviceId);
+    if (gateway != null) {
+      if (identical(_connectedDevices[attempt.deviceId]?.gateway, gateway)) {
+        _connectedDevices.remove(attempt.deviceId);
+      }
       _retireGateway(attempt.deviceId, gateway);
     }
     if (attempt.nativeStarted) {
@@ -282,7 +285,14 @@ class LedgerBleConnectionManager extends ConnectionManager {
   void _supersede() {
     if (_disposed || _superseded) return;
     _superseded = true;
+    _clearAvailabilityCallback();
     _retireAll();
+  }
+
+  void _clearAvailabilityCallback() {
+    if (!identical(_availabilityCallbackOwner, this)) return;
+    UniversalBle.onAvailabilityChange = null;
+    _availabilityCallbackOwner = null;
   }
 
   @override
@@ -318,7 +328,11 @@ class LedgerBleConnectionManager extends ConnectionManager {
   Stream<AvailabilityState> get statusStateChanges {
     if (_disposed || _superseded) throw LedgerManagerDisposedException(ConnectionType.ble);
 
-    UniversalBle.onAvailabilityChange = _statusStateChangesController.add;
+    _availabilityCallbackOwner = this;
+    UniversalBle.onAvailabilityChange = (state) {
+      if (_disposed || _superseded || !identical(_availabilityCallbackOwner, this)) return;
+      _statusStateChangesController.add(state);
+    };
     return _statusStateChangesController.stream;
   }
 
@@ -381,6 +395,7 @@ class LedgerBleConnectionManager extends ConnectionManager {
     if (_disposed) return;
     _disposed = true;
 
+    _clearAvailabilityCallback();
     unawaited(_statusStateChangesController.close());
     final deviceIds = _retireAll();
     final disconnections = deviceIds.map((deviceId) async {
@@ -394,7 +409,6 @@ class LedgerBleConnectionManager extends ConnectionManager {
     _connectedDevices.clear();
     if (identical(_callbackOwner, this)) {
       UniversalBle.onConnectionChange = null;
-      UniversalBle.onAvailabilityChange = null;
       _callbackOwner = null;
     }
     unawaited(_onConnectionChangeController.close());

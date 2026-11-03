@@ -29,9 +29,12 @@ class _BlePlatform extends UniversalBlePlatform {
   Completer<void>? stateEntered;
   Completer<void>? discoveryGate;
   Completer<void>? discoveryEntered;
+  Completer<void>? mtuGate;
+  Completer<void>? mtuEntered;
   Completer<void>? disconnectGate;
   Completer<void>? disconnectEntered;
   int disconnectCalls = 0;
+  int notificationSubscriptions = 0;
   final writes = <Uint8List>[];
   final _writeEvents = StreamController<int>.broadcast(sync: true);
 
@@ -99,7 +102,11 @@ class _BlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<int> requestMtu(String deviceId, int expectedMtu) async => expectedMtu;
+  Future<int> requestMtu(String deviceId, int expectedMtu) async {
+    if (mtuEntered != null && !mtuEntered!.isCompleted) mtuEntered!.complete();
+    await mtuGate?.future;
+    return expectedMtu;
+  }
 
   @override
   Future<void> setNotifiable(
@@ -107,7 +114,9 @@ class _BlePlatform extends UniversalBlePlatform {
     String service,
     String characteristic,
     BleInputProperty bleInputProperty,
-  ) async {}
+  ) async {
+    notificationSubscriptions++;
+  }
 
   @override
   Future<void> writeValue(
@@ -249,6 +258,103 @@ void main() {
     tearDown(() async {
       await manager.dispose();
       await platform._writeEvents.close();
+    });
+
+    test("gateway startup does not expose a usable session or accept APDUs", () async {
+      platform.mtuGate = Completer<void>();
+      platform.mtuEntered = Completer<void>();
+      final starting = manager.connectSession(_device);
+      await platform.mtuEntered!.future;
+      try {
+        expect(await manager.devices, isEmpty);
+        expect(manager.hasDeviceSession(_device.id), isFalse);
+        final premature = LedgerConnection(manager, _device);
+        expect(premature.isDisconnected, isTrue);
+        await expectLater(
+          premature.sendOperation(_ByteOperation(1)),
+          throwsA(isA<DeviceNotConnectedException>()),
+        );
+        await expectLater(
+          manager.sendRawOperation(_device, _ByteOperation(1), null),
+          throwsA(isA<DeviceNotConnectedException>()),
+        );
+        expect(platform.writes, isEmpty);
+      } finally {
+        platform.mtuGate!.complete();
+        platform.mtuGate = null;
+        await starting;
+      }
+
+      final session = await starting;
+      expect(await manager.devices, [_device]);
+      expect(manager.hasDeviceSession(_device.id, session), isTrue);
+      final connection = LedgerConnection(manager, _device, bleSession: session);
+      final next = connection.sendOperation(_ByteOperation(2));
+      await platform.waitForWrites(1);
+      platform.response([5, 0, 0, 0, 1, 7]);
+      expect(await next, 7);
+    });
+
+    test("disconnect during gateway startup retires it before reconnect", () async {
+      platform.mtuGate = Completer<void>();
+      platform.mtuEntered = Completer<void>();
+      final starting = manager.connect(_device);
+      final failure = expectLater(starting, throwsA(_lost));
+      await platform.mtuEntered!.future;
+      final disconnecting = manager.disconnect(_device.id);
+      await failure;
+      final reconnecting = manager.connect(_device);
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(platform.connectCalls, 1);
+        expect(platform.notificationSubscriptions, 0);
+      } finally {
+        platform.mtuGate!.complete();
+        platform.mtuGate = null;
+        await Future.wait([disconnecting, reconnecting]);
+      }
+
+      expect(platform.connectCalls, 2);
+      expect(platform.notificationSubscriptions, 1);
+      final connection = LedgerConnection(manager, _device);
+      final next = connection.sendOperation(_ByteOperation(2));
+      await platform.waitForWrites(1);
+      platform.response([5, 0, 0, 0, 1, 8]);
+      expect(await next, 8);
+    });
+
+    test("replacement detaches old availability callbacks and preserves its own", () async {
+      final old = manager;
+      final oldEvents = <AvailabilityState>[];
+      final oldSubscription = old.statusStateChanges.listen(oldEvents.add);
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(oldEvents, [AvailabilityState.poweredOn]);
+        final oldCallback = platform.onAvailabilityChange!;
+        manager = LedgerBleConnectionManager(onPermissionRequest: (_) async => true);
+        await old.dispose();
+        expect(platform.onAvailabilityChange, isNull);
+        expect(() => oldCallback(AvailabilityState.poweredOff), returnsNormally);
+        expect(oldEvents, [AvailabilityState.poweredOn]);
+
+        final newEvents = <AvailabilityState>[];
+        final newSubscription = manager.statusStateChanges.listen(newEvents.add);
+        try {
+          await Future<void>.delayed(Duration.zero);
+          final newCallback = platform.onAvailabilityChange!;
+          await old.dispose();
+          expect(identical(platform.onAvailabilityChange, newCallback), isTrue);
+          newCallback(AvailabilityState.poweredOff);
+          await Future<void>.delayed(Duration.zero);
+          expect(newEvents, [AvailabilityState.poweredOn, AvailabilityState.poweredOff]);
+          expect(oldEvents, [AvailabilityState.poweredOn]);
+        } finally {
+          await newSubscription.cancel();
+        }
+      } finally {
+        await oldSubscription.cancel();
+        await old.dispose();
+      }
     });
 
     test("physical loss fails active and queued requests and a reconnect starts fresh", () async {
